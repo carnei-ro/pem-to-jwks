@@ -1,0 +1,61 @@
+require 'chilkat'
+require 'base64'
+require 'json'
+require 'openssl'
+require 'optparse'
+
+options = {}
+option_parser = OptionParser.new do |opts|
+  opts.banner = "Usage: certficate-to-jwks [options]"
+  opts.on('-k', '--kid KEY-ID', String, 'Key ID - JWT header "kid"') { |v| options[:kid] = v }
+  opts.on('-f', '--file FILE', String, 'Certificate File (.pem)') { |v| options[:certificate_file] = v }
+  opts.on('-c', '--cert-chain-files FILE1,FILE2,FILE3', String, 'Certificate Chain Files (.pem)') { |v| options[:chain_files] = v }
+  opts.banner += "\n\nUsing Docker:\n docker run -it --rm -v ${PWD}:/data \\\n leandrocarneiro/certificate-to-jwks \\\n  -f /data/cert.pem \\\n  -k 00000000-0000-0000-0000-000000000000 \\\n  -c /data/chain_cert1.pem,/data/chain_cert2.pem,/data/chain_cert3.pem\n\n"
+end
+
+option_parser.parse!
+
+if (options[:kid].nil? || options[:certificate_file].nil?) then
+  puts option_parser.help
+  exit 1
+end
+
+if !File.file?(options[:certificate_file]) then
+  puts "File: #{options[:certificate_file]} not found!"
+  exit 1
+end
+
+if (options[:chain_files]) then
+  options[:chain_files] = options[:chain_files].split(",")
+  options[:chain_files].each do |f|
+    if !File.file?(f) then
+      puts "File: #{f} not found!"
+      exit 1
+    end
+  end
+end
+
+cert = OpenSSL::X509::Certificate.new(File.read(options[:certificate_file]))
+x509_sha1_thumbprint = (Base64.encode64(OpenSSL::Digest::SHA1.new(cert.to_der).to_s.upcase.scan(/../).map(&:hex).pack("c*")).strip).gsub("+", "-").gsub("/", "_").gsub(/==$/, "").gsub(/=$/, "")
+
+pubKey = Chilkat::CkPublicKey.new()
+pubKey.LoadFromString(cert.public_key.to_pem)
+jwk = JSON.parse(pubKey.getJwk())
+jwk['x5t'] = x509_sha1_thumbprint
+jwk['key_ops'] = [ "verify" ]
+jwk['kid'] = options[:kid]
+jwk['x5c'] = []
+jwk['x5c'][0] = cert.to_pem.gsub("-----END CERTIFICATE-----","").gsub("-----BEGIN CERTIFICATE-----","").gsub("\n","")
+
+options[:chain_files].each do |crt|
+  chain_cert = OpenSSL::X509::Certificate.new(File.read(crt))
+  jwk['x5c'] << chain_cert.to_pem.gsub("-----END CERTIFICATE-----","").gsub("-----BEGIN CERTIFICATE-----","").gsub("\n","")
+end
+
+jwks = {
+  'keys' => [
+    jwk
+  ]
+}
+
+print(JSON.pretty_generate(jwks))

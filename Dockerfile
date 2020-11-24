@@ -1,6 +1,7 @@
-FROM node:alpine
-RUN npm install -g pem-jwk ; apk add --no-cache jq
+FROM ruby:2.7
 
-COPY ./convert.sh /convert.sh
+RUN gem install chilkat optparse
 
-ENTRYPOINT [ "/convert.sh" ]
+COPY ./certificate-to-jwks /certificate-to-jwks
+
+ENTRYPOINT [ "ruby", "/certificate-to-jwks" ]
